@@ -5,3 +5,5 @@ fens.ipynb
 OOP/
 .DS_Store
 .ruff_cache
+__pycache__/
+*pyc
