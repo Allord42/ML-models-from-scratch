@@ -82,10 +82,10 @@ class LogisticRegression:
         p1 = self.sigmoid(self.bias + np.dot(X_test, self.weights))
         p0 = 1 - p1
         return np.vstack([p0, p1]).T
-    
+
 
 # Learning linear regression models using GD, while sklearn finds analytical solution
-#    TODO: ADD SGD and Batch SGD
+#    TODO: ADD SGD and Batch SGD and optionally analitical solving for regression
 
 
 class Regression:
@@ -109,7 +109,7 @@ class Regression:
         bias -= np.dot(self.lr, gradient_bias)
         return weights, bias
 
-    def fit(self, X, y, epsilon=5):
+    def fit(self, X, y, epsilon=0.1):
         prev_loss = float("inf")
         self.weights = np.zeros(X.shape[1])
         self.bias = 0
