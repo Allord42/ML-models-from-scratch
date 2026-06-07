@@ -258,6 +258,11 @@ class SVM(Regression):
 
 
 class SVM(Regression):
+    """
+    Not Karush–Kuhn–Tucker conditions as it implemented in sklearn.
+    Looks more like SGDClassifier(loss="hinge", penalty="l2") from sklearn.
+    Support vectors here are implicit. They are used when margin less than 1.
+    """
     def __init__(self, lr=0.001, C=1, num_iter=1000):
         super().__init__(lr=lr, num_iter=num_iter)
         self.C = C
@@ -275,7 +280,7 @@ class SVM(Regression):
                     grad_w += self.weights  # only regularization
                     grad_b += 0
                 else:
-                    grad_w += self.weights - self.C * y[i] * X[i]  # hinge loss active
+                    grad_w += self.weights - self.C * y[i] * X[i]  #hinge loss active
                     grad_b += -self.C * y[i]
 
             grad_w /= n
@@ -283,8 +288,12 @@ class SVM(Regression):
 
             return {"weights": grad_w, "bias": grad_b}
 
-    def loss(self, preds, y, n, loss="hinge"):
+    def loss(self, preds, y, n=None, loss="hinge"):
         if loss == "hinge":
             margins = 1 - y * preds
             hinge = np.maximum(0, margins)
-            return 0.5 * np.sum(self.weights**2) + self.C * np.sum(hinge)
+            return 0.5 * np.sum(self.weights**2) + self.C * np.sum(hinge) / n
+
+    def predict(self, X_test):
+        predictions = np.sign(self.bias + np.dot(X_test, self.weights))
+        return predictions
