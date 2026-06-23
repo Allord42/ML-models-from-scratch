@@ -1,8 +1,7 @@
 ## Creating ML models from scratch without AI code agents
 
 **Prohibited:**
-- Using any machine learning libraries for any reason  
-  (except comparing their results with local implementations)
+- Using any machine learning libraries for any reason except comparing their results with local implementations
 
 **Permitted:**
 - `numpy`  

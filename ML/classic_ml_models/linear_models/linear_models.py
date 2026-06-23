@@ -263,6 +263,7 @@ class SVM(Regression):
     Looks more like SGDClassifier(loss="hinge", penalty="l2") from sklearn.
     Support vectors here are implicit. They are used when margin less than 1.
     """
+
     def __init__(self, lr=0.001, C=1, num_iter=1000):
         super().__init__(lr=lr, num_iter=num_iter)
         self.C = C
@@ -280,7 +281,7 @@ class SVM(Regression):
                     grad_w += self.weights  # only regularization
                     grad_b += 0
                 else:
-                    grad_w += self.weights - self.C * y[i] * X[i]  #hinge loss active
+                    grad_w += self.weights - self.C * y[i] * X[i]  # hinge loss active
                     grad_b += -self.C * y[i]
 
             grad_w /= n
