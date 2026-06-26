@@ -1,6 +1,11 @@
 import numpy as np
 from dataclasses import dataclass
 from graphviz import Digraph
+from sklearn.base import (
+    BaseEstimator,
+    ClassifierMixin,
+    RegressorMixin,
+)  # for gridsearch
 
 
 @dataclass
@@ -9,19 +14,24 @@ class Node:
     threshold: float = None
     left: "Node" = None
     right: "Node" = None
-    prediction: int = None  # in final leaf
+    prediction: int = None  # in the final leaf
+    probability: dict = None  # probability of classes in the leaf
 
 
-@dataclass
 class Tree:
-    """
-    Classifier Tree with classes 0 and 1
-    """
-
-    criterion: str = "entropy"
-    max_depth: int = None
-    min_samples_split: int = 2
-    min_samples_leaf: int = 1
+    def __init__(
+        self,
+        criterion="entropy",
+        max_depth=None,
+        min_samples_split=2,
+        min_samples_leaf=1,
+        round_digits=4,
+    ):
+        self.criterion = criterion
+        self.max_depth = max_depth
+        self.min_samples_split = min_samples_split
+        self.min_samples_leaf = min_samples_leaf
+        self.round_digits = round_digits
 
     @staticmethod
     def gini(pos, neg):
@@ -56,18 +66,32 @@ class Tree:
             H -= p_neg * np.log2(p_neg)
         return H
 
+    @staticmethod
+    def mse(y):
+        mean = np.mean(y)
+        return np.mean((y - mean) ** 2)
+
+    def class_prediction_in_leaf(self, y):
+        if isinstance(self, DecisionTreeClassifier):
+            values, counts = np.unique(y, return_counts=True)
+            most_frequent = values[counts.argmax()]
+            return most_frequent
+        if isinstance(self, DecisionTreeRegressor):
+            return np.round(sum(y) / len(y), self.round_digits)
+
     def visualize_tree(self, node, dot=None, parent=None, edge_label=""):
         if dot is None:
             dot = Digraph()
             dot.attr("node", shape="box", style="filled")
 
         if node.prediction is not None:
-            if node.prediction == 1:
-                label = "Leaf\npredict=1"
-                color = "lightgreen"
-            else:
-                label = "Leaf\npredict=0"
-                color = "lightcoral"
+            label = f"Leaf\npredict={node.prediction}"
+            color = (
+                "lightgreen"
+                if isinstance(self, DecisionTreeClassifier)
+                else "lightyellow"
+            )
+
         else:
             label = f"{node.feature} <= {node.threshold:.2f}"
             color = "lightblue"
@@ -85,12 +109,7 @@ class Tree:
 
         return dot
 
-    def _prediction_in_leaf(self, y):
-        if sum(y) > len(y) // 2:
-            return 1
-        return 0
-
-    def _check_stop_conditions(self, N, y, depth):
+    def check_stop_conditions(self, N, y, depth):
         if len(set(y)) == 1:  # all labels are the same in the leaf
             return True
         if self.max_depth is not None and depth >= self.max_depth:
@@ -99,12 +118,19 @@ class Tree:
             return True
         return False
 
-    def build_tree(self, X, y, depth):
+    def build_tree(self, X, y, depth, current_impurity=float("inf")):
         N = len(X)
-        if self._check_stop_conditions(N, y, depth):
-            return Node(prediction=self._prediction_in_leaf(y))
+        y = np.array(y)
+        if self.check_stop_conditions(N, y, depth):
+            if isinstance(self, DecisionTreeClassifier):
+                return Node(
+                    prediction=self.class_prediction_in_leaf(y),
+                    probability=self.probability_prediction_in_leaf(y),
+                )
+            elif isinstance(self, DecisionTreeRegressor):
+                return Node(prediction=self.class_prediction_in_leaf(y))
         else:
-            min_H = float("inf")
+            min_H = current_impurity
             best_col_to_split, best_threshold = None, None
             best_left_idx, best_right_idx = None, None
 
@@ -133,38 +159,123 @@ class Tree:
                         len_right - pos_in_right,
                     )
 
-                    if self.criterion == "gini":
-                        G_left = Tree.gini(pos_in_left, neg_in_left)
-                        G_right = Tree.gini(pos_in_right, neg_in_right)
-                    else:
-                        G_left = Tree.entropy(pos_in_left, neg_in_left)
-                        G_right = Tree.entropy(pos_in_right, neg_in_right)
+                    if isinstance(self, DecisionTreeClassifier):
+                        impurity = getattr(Tree, self.criterion)
+                        G_left = impurity(pos_in_left, neg_in_left)
+                        G_right = impurity(pos_in_right, neg_in_right)
+                    else:  # DecisionTreeRegressor
+                        G_left = Tree.mse(y_left)
+                        G_right = Tree.mse(y_right)
 
                     H_after_split = (len_left / N) * G_left + (len_right / N) * G_right
 
-                    if H_after_split < min_H:
+                    if (
+                        H_after_split < min_H
+                        and len_left >= self.min_samples_leaf
+                        and len_right >= self.min_samples_leaf
+                    ):
                         min_H = H_after_split
                         best_col_to_split = col_name
                         best_threshold = threshold
                         best_left_idx, best_right_idx = left_idx, right_idx
 
-        if best_col_to_split is None:
-            return Node(prediction=self._prediction_in_leaf(y))
+        if best_col_to_split is None or min_H == current_impurity:  # early stopping
+            if isinstance(self, DecisionTreeClassifier):
+                return Node(
+                    prediction=self.class_prediction_in_leaf(y),
+                    probability=self.probability_prediction_in_leaf(y),
+                )
+            elif isinstance(self, DecisionTreeRegressor):
+                return Node(prediction=self.class_prediction_in_leaf(y))
 
         left = self.build_tree(X.iloc[best_left_idx], y[best_left_idx], depth + 1)
         right = self.build_tree(X.iloc[best_right_idx], y[best_right_idx], depth + 1)
         node = Node(best_col_to_split, best_threshold, left, right)
         return node
 
-    def predict_one(self, x, node=None):
+    def score(self, X, y):
+        y_pred = self.predict(X)
+        return np.mean(y_pred == y)
+
+
+class DecisionTreeClassifier(Tree, BaseEstimator, ClassifierMixin):
+    def __init__(
+        self,
+        criterion="entropy",
+        max_depth=None,
+        min_samples_split=2,
+        min_samples_leaf=1,
+        round_digits=4,
+    ):
+        super().__init__(
+            criterion=criterion,
+            max_depth=max_depth,
+            min_samples_split=min_samples_split,
+            min_samples_leaf=min_samples_leaf,
+            round_digits=round_digits,
+        )
+
+    def probability_prediction_in_leaf(self, y):
+        values, counts = np.unique(y, return_counts=True)
+        probs = counts / counts.sum()
+        return dict(zip(values, np.round(probs, self.round_digits)))
+
+    def predict_one(self, x, node=None, proba=None):
+        if node is None:
+            node = self.root
+        if node.prediction is not None:
+            if proba == "proba":
+                return node.probability
+            else:
+                return node.prediction
+        if x[node.feature] <= node.threshold:
+            return self.predict_one(x, node.left, proba)
+        else:
+            return self.predict_one(x, node.right, proba)
+
+    def fit(self, X_train, y_train, depth=1):
+        self.classes_ = np.unique(y_train)
+        self.root = self.build_tree(X_train, y_train, depth)
+        return self.root
+
+    def predict(self, X):
+        return np.array([self.predict_one(row) for _, row in X.iterrows()])
+
+    def predict_proba(self, X):
+        probs = []
+        for _, row in X.iterrows():
+            leaf_prob = self.predict_one(row, proba="proba")
+            row_probs = [leaf_prob.get(c, 0.0) for c in self.classes_]
+            probs.append(row_probs)
+        return np.array(probs)
+
+
+class DecisionTreeRegressor(Tree, BaseEstimator, RegressorMixin):
+    def __init__(
+        self,
+        criterion="mse",
+        max_depth=None,
+        min_samples_split=2,
+        min_samples_leaf=1,
+        round_digits=4,
+    ):
+        super().__init__(
+            criterion=criterion,
+            max_depth=max_depth,
+            min_samples_split=min_samples_split,
+            min_samples_leaf=min_samples_leaf,
+            round_digits=round_digits,
+        )
+
+    def predict_one(self, x, node=None, proba=None):
         if node is None:
             node = self.root
         if node.prediction is not None:
             return node.prediction
         if x[node.feature] <= node.threshold:
-            return self.predict_one(x, node.left)
+            return self.predict_one(x, node.left, proba)
         else:
-            return self.predict_one(x, node.right)
+            return self.predict_one(x, node.right, proba)
 
     def fit(self, X_train, y_train, depth=1):
         self.root = self.build_tree(X_train, y_train, depth)
@@ -172,3 +283,9 @@ class Tree:
 
     def predict(self, X):
         return np.array([self.predict_one(row) for _, row in X.iterrows()])
+
+    def score(self, X, y):
+        y_pred = self.predict(X)
+        ss_res = np.sum((y - y_pred) ** 2)
+        ss_tot = np.sum((y - np.mean(y)) ** 2)
+        return 1 - ss_res / ss_tot
